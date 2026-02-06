@@ -1,0 +1,90 @@
+trigger:
+- main
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  azureServiceConnection: 'Azure-Service-Connection'
+  webAppName: 'terraformwebapp12345'
+  resourceGroupName: 'rg-terraform-webapp'
+
+stages:
+
+# -------------------------------
+# STAGE 1: Terraform Infrastructure
+# -------------------------------
+- stage: Terraform_Infrastructure
+  displayName: Terraform Apply
+  jobs:
+  - job: TerraformApply
+    displayName: Provision Azure Infrastructure
+    steps:
+    - checkout: self
+
+    - task: AzureCLI@2
+      displayName: Terraform Init & Apply
+      inputs:
+        azureSubscription: $(azureServiceConnection)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          terraform --version
+          terraform init
+          terraform apply -auto-approve \
+            -var="webapp_name=$(webAppName)"
+
+# -------------------------------
+# STAGE 2: Deploy App to Staging Slot
+# -------------------------------
+- stage: Deploy_Staging
+  displayName: Deploy Application to Staging Slot
+  dependsOn: Terraform_Infrastructure
+  jobs:
+  - job: DeployApp
+    displayName: Deploy Node App
+    steps:
+    - checkout: self
+
+    - task: ArchiveFiles@2
+      displayName: Create App ZIP
+      inputs:
+        rootFolderOrFile: 'app'
+        includeRootFolder: false
+        archiveType: zip
+        archiveFile: '$(Build.ArtifactStagingDirectory)/app.zip'
+        replaceExistingArchive: true
+
+    - task: AzureWebApp@1
+      displayName: Deploy to Staging Slot
+      inputs:
+        azureSubscription: $(azureServiceConnection)
+        appType: webAppLinux
+        appName: $(webAppName)
+        slotName: staging
+        package: '$(Build.ArtifactStagingDirectory)/app.zip'
+
+# -------------------------------
+# STAGE 3: Slot Swap (Staging → Production)
+# -------------------------------
+- stage: Swap_To_Production
+  displayName: Swap Slots
+  dependsOn: Deploy_Staging
+  jobs:
+  - job: SwapSlots
+    displayName: Swap Staging to Production
+    steps:
+    - checkout: self
+
+    - task: AzureCLI@2
+      displayName: Slot Swap
+      inputs:
+        azureSubscription: $(azureServiceConnection)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          az webapp deployment slot swap \
+            --resource-group $(resourceGroupName) \
+            --name $(webAppName) \
+            --slot staging \
+            --target-slot production
