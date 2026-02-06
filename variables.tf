@@ -7,5 +7,5 @@ variable "location" {
 }
 
 variable "webapp_name" {
-  description = "Globally unique web app name"
+  description = "Globally unique Web App name"
 }
